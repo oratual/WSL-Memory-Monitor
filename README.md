@@ -2,11 +2,14 @@
 
 A comprehensive visual memory management tool for WSL2 on Windows. Control and monitor memory allocation between Windows and WSL with an intuitive slider interface and persistent system tray indicator.
 
-![WSL Memory Monitor](https://img.shields.io/badge/WSL-Memory%20Monitor-blue)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/oratual/WSL-Memory-Monitor)
+![GitHub all releases](https://img.shields.io/github/downloads/oratual/WSL-Memory-Monitor/total)
 ![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%2F11-0078D6?logo=windows)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.0+-5391FE?logo=powershell)
 ![WSL2](https://img.shields.io/badge/WSL-2.0+-FCC624?logo=linux)
+![RAM](https://img.shields.io/badge/RAM-16GB+-green)
+![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)
 
 ## 📋 Table of Contents
 
