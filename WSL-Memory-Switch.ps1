@@ -1,13 +1,122 @@
 # WSL Memory Switch - Cambiar perfiles de memoria para WSL2
-# Sistema: Ryzen 9 5900X (24 threads) + 64GB RAM
+# Perfiles dinámicos basados en RAM del sistema
 
-$ConfigPath = "C:\Users\lauta\.wslconfig"
-$BackupPath = "C:\Users\lauta\.wslconfig.backup"
-$ProfilesPath = "\\wsl.localhost\Ubuntu\home\lauta\glados\scripts\wsl-memory-switch\wsl-memory-profiles.conf"
+$ConfigPath = "$env:USERPROFILE\.wslconfig"
+$BackupPath = "$env:USERPROFILE\.wslconfig.backup"
 
 # Colores
 function Write-ColorText($text, $color) {
     Write-Host $text -ForegroundColor $color
+}
+
+# Función para detectar recursos del sistema
+function Get-SystemResources {
+    try {
+        # Obtener RAM total en GB
+        $totalRAM = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+
+        # Obtener número de CPUs lógicos
+        $totalCPUs = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
+
+        # Obtener nombre del procesador
+        $cpuName = (Get-CimInstance Win32_Processor).Name -replace '\s+', ' '
+
+        return @{
+            TotalRAM = $totalRAM
+            TotalCPUs = $totalCPUs
+            CPUName = $cpuName
+        }
+    } catch {
+        Write-ColorText "Error detectando recursos del sistema: $_" "Red"
+        # Valores por defecto si hay error
+        return @{
+            TotalRAM = 16
+            TotalCPUs = 8
+            CPUName = "Unknown CPU"
+        }
+    }
+}
+
+# Función para generar perfiles dinámicos basados en RAM disponible
+function Get-DynamicProfiles {
+    param($systemResources)
+
+    $totalRAM = $systemResources.TotalRAM
+    $totalCPUs = $systemResources.TotalCPUs
+
+    # Calcular perfiles basados en porcentajes de RAM
+    # Perfil 1: GAMING - 12.5% RAM para WSL (mínimo 4GB, máximo 8GB)
+    $p1_wsl = [math]::Max(4, [math]::Min(8, [math]::Floor($totalRAM * 0.125)))
+    $p1_cpu = [math]::Max(2, [math]::Floor($totalCPUs * 0.25))
+
+    # Perfil 2: WINDOWS FOCUS - 25% RAM para WSL
+    $p2_wsl = [math]::Max(8, [math]::Floor($totalRAM * 0.25))
+    $p2_cpu = [math]::Max(4, [math]::Floor($totalCPUs * 0.33))
+
+    # Perfil 3: BALANCED - 37.5% RAM para WSL
+    $p3_wsl = [math]::Max(12, [math]::Floor($totalRAM * 0.375))
+    $p3_cpu = [math]::Max(6, [math]::Floor($totalCPUs * 0.50))
+
+    # Perfil 4: WSL DEV - 50% RAM para WSL
+    $p4_wsl = [math]::Max(16, [math]::Floor($totalRAM * 0.50))
+    $p4_cpu = [math]::Max(8, [math]::Floor($totalCPUs * 0.67))
+
+    # Perfil 5: WSL FOCUS - 75% RAM para WSL (máximo seguro)
+    $p5_wsl = [math]::Max(24, [math]::Min($totalRAM - 8, [math]::Floor($totalRAM * 0.75)))
+    $p5_cpu = [math]::Max(12, [math]::Floor($totalCPUs * 0.83))
+
+    return @(
+        @{
+            Name = "GAMING"
+            Level = 1
+            WSL_RAM = $p1_wsl
+            WSL_CPU = $p1_cpu
+            WIN_RAM = $totalRAM - $p1_wsl
+            WIN_CPU = $totalCPUs - $p1_cpu
+            Color = "Red"
+            Description = "Juegos AAA, streaming, máximo rendimiento Windows"
+        },
+        @{
+            Name = "WINDOWS FOCUS"
+            Level = 2
+            WSL_RAM = $p2_wsl
+            WSL_CPU = $p2_cpu
+            WIN_RAM = $totalRAM - $p2_wsl
+            WIN_CPU = $totalCPUs - $p2_cpu
+            Color = "Blue"
+            Description = "Edición video, diseño, VMs Windows"
+        },
+        @{
+            Name = "BALANCED"
+            Level = 3
+            WSL_RAM = $p3_wsl
+            WSL_CPU = $p3_cpu
+            WIN_RAM = $totalRAM - $p3_wsl
+            WIN_CPU = $totalCPUs - $p3_cpu
+            Color = "Yellow"
+            Description = "Uso mixto, desarrollo + apps Windows"
+        },
+        @{
+            Name = "WSL DEV"
+            Level = 4
+            WSL_RAM = $p4_wsl
+            WSL_CPU = $p4_cpu
+            WIN_RAM = $totalRAM - $p4_wsl
+            WIN_CPU = $totalCPUs - $p4_cpu
+            Color = "Green"
+            Description = "Desarrollo, Docker, builds medianos"
+        },
+        @{
+            Name = "WSL FOCUS"
+            Level = 5
+            WSL_RAM = $p5_wsl
+            WSL_CPU = $p5_cpu
+            WIN_RAM = $totalRAM - $p5_wsl
+            WIN_CPU = $totalCPUs - $p5_cpu
+            Color = "Cyan"
+            Description = "Desarrollo intensivo, Docker pesado, compilación"
+        }
+    )
 }
 
 # Función para obtener estado actual
@@ -25,67 +134,62 @@ function Get-CurrentProfile {
     return $null
 }
 
-# Función para mostrar menú
+# Función para mostrar menú con perfiles dinámicos
 function Show-Menu {
+    param($systemResources, $profiles)
+
     Clear-Host
-    Write-ColorText "================================================" "Cyan"
-    Write-ColorText "       WSL MEMORY SWITCH - CONTROL PANEL        " "Yellow"
-    Write-ColorText "================================================" "Cyan"
-    Write-ColorText "Sistema: Ryzen 9 5900X (24 cores) + 64GB RAM" "Gray"
-    Write-ColorText "================================================" "Cyan"
-    
+    Write-ColorText "═══════════════════════════════════════════════════════════" "Cyan"
+    Write-ColorText "          WSL MEMORY SWITCH - CONTROL PANEL                " "Yellow"
+    Write-ColorText "═══════════════════════════════════════════════════════════" "Cyan"
+    Write-ColorText "Sistema: $($systemResources.CPUName)" "Gray"
+    Write-ColorText "RAM Total: $($systemResources.TotalRAM) GB | CPUs: $($systemResources.TotalCPUs) cores" "Gray"
+    Write-ColorText "═══════════════════════════════════════════════════════════" "Cyan"
+
     # Mostrar estado actual
     $current = Get-CurrentProfile
     if ($current) {
         Write-ColorText "`nEstado Actual:" "Green"
         Write-ColorText "  Memoria: $($current.Memory)" "White"
         Write-ColorText "  Procesadores: $($current.Processors)" "White"
+
+        # Verificar si el daemon está activo
+        if (Test-DaemonRunning) {
+            Write-ColorText "  Modo dinámico: ACTIVO ⚡" "Green"
+        }
     }
-    
-    Write-ColorText "`n================================================" "Cyan"
-    Write-ColorText "PERFILES DISPONIBLES:" "Yellow"
-    Write-ColorText "================================================" "Cyan"
-    
+
+    Write-ColorText "`n═══════════════════════════════════════════════════════════" "Cyan"
+    Write-ColorText "PERFILES DISPONIBLES (calculados para tu sistema):" "Yellow"
+    Write-ColorText "═══════════════════════════════════════════════════════════" "Cyan"
+
+    # Mostrar cada perfil dinámicamente
+    $index = 1
+    foreach ($profile in $profiles) {
+        Write-Host ""
+        Write-ColorText "[$index] $($profile.Name)" $profile.Color
+        Write-Host "    ├─ WSL:     $($profile.WSL_RAM) GB RAM + $($profile.WSL_CPU) CPUs"
+        Write-Host "    ├─ Windows: $($profile.WIN_RAM) GB RAM + $($profile.WIN_CPU) CPUs disponibles"
+        Write-Host "    └─ Uso: $($profile.Description)"
+        $index++
+    }
+
     Write-Host ""
-    Write-ColorText "[1] GAMING MODE" "Red"
-    Write-Host "    └─ WSL: 8GB RAM + 4 CPUs"
-    Write-Host "    └─ Windows: 56GB RAM + 20 CPUs disponibles"
-    Write-Host "    └─ Ideal para: Juegos AAA, streaming"
-    
-    Write-Host ""
-    Write-ColorText "[2] BALANCED MODE" "Yellow"
-    Write-Host "    └─ WSL: 24GB RAM + 12 CPUs"
-    Write-Host "    └─ Windows: 40GB RAM + 12 CPUs disponibles"
-    Write-Host "    └─ Ideal para: Uso mixto, desarrollo + apps Windows"
-    
-    Write-Host ""
-    Write-ColorText "[3] WSL FOCUS MODE" "Green"
-    Write-Host "    └─ WSL: 48GB RAM + 20 CPUs"
-    Write-Host "    └─ Windows: 16GB RAM + 4 CPUs disponibles"
-    Write-Host "    └─ Ideal para: Desarrollo intensivo, Docker, compilación"
-    
-    Write-Host ""
-    Write-ColorText "[4] WINDOWS FOCUS MODE" "Blue"
-    Write-Host "    └─ WSL: 16GB RAM + 8 CPUs"
-    Write-Host "    └─ Windows: 48GB RAM + 16 CPUs disponibles"
-    Write-Host "    └─ Ideal para: Edición video, diseño, VMs Windows"
-    
-    Write-Host ""
-    Write-ColorText "[5] CUSTOM MODE" "Magenta"
-    Write-Host "    └─ Configurar valores personalizados"
-    
+    Write-ColorText "[C] CUSTOM MODE" "Magenta"
+    Write-Host "    └─ Configurar valores personalizados a mano"
+
     Write-Host ""
     Write-ColorText "[R] RESTART WSL" "Cyan"
     Write-Host "    └─ Reiniciar WSL para aplicar cambios"
-    
+
     Write-Host ""
     Write-ColorText "[S] STATUS" "White"
     Write-Host "    └─ Ver estado detallado de WSL"
-    
+
     Write-Host ""
     Write-ColorText "[Q] SALIR" "DarkGray"
-    
-    Write-ColorText "`n================================================" "Cyan"
+
+    Write-ColorText "`n═══════════════════════════════════════════════════════════" "Cyan"
 }
 
 # Función para verificar si el daemon está corriendo
@@ -276,70 +380,186 @@ function Show-Status {
     Pause
 }
 
-# Función para modo personalizado
+# Función para modo personalizado con límites dinámicos
 function Custom-Mode {
+    param($systemResources)
+
     Clear-Host
-    Write-ColorText "=== MODO PERSONALIZADO ===" "Magenta"
-    Write-Host "Sistema: 64GB RAM total, 24 CPUs disponibles"
+    Write-ColorText "═══════════════════════════════════════════════════════════" "Magenta"
+    Write-ColorText "              MODO PERSONALIZADO - CONFIGURACIÓN MANUAL     " "Yellow"
+    Write-ColorText "═══════════════════════════════════════════════════════════" "Magenta"
     Write-Host ""
-    
+    Write-Host "Sistema detectado:"
+    Write-Host "  • RAM Total:  $($systemResources.TotalRAM) GB"
+    Write-Host "  • CPUs Total: $($systemResources.TotalCPUs) cores"
+    Write-Host ""
+    Write-ColorText "Recomendaciones:" "Cyan"
+    Write-Host "  • RAM para WSL:  mínimo 4GB, máximo $($systemResources.TotalRAM - 4)GB"
+    Write-Host "  • Deja al menos 4GB para Windows"
+    Write-Host "  • CPUs para WSL: mínimo 2, máximo $($systemResources.TotalCPUs - 1)"
+    Write-Host ""
+    Write-ColorText "═══════════════════════════════════════════════════════════" "Magenta"
+
+    # Calcular límites seguros
+    $maxSafeRAM = $systemResources.TotalRAM - 4  # Dejar mínimo 4GB para Windows
+    $maxSafeCPU = $systemResources.TotalCPUs - 1  # Dejar al menos 1 CPU para Windows
+
     # Solicitar memoria
+    Write-Host ""
     do {
-        $memInput = Read-Host "Cuánta memoria asignar a WSL? (ej: 32)"
+        $memInput = Read-Host "¿Cuánta memoria asignar a WSL? (en GB, ej: 32)"
         $memValue = 0
-        if ([int]::TryParse($memInput, [ref]$memValue) -and $memValue -gt 0 -and $memValue -le 60) {
-            $memory = "${memValue}GB"
-            break
+        if ([int]::TryParse($memInput, [ref]$memValue)) {
+            if ($memValue -lt 1) {
+                Write-ColorText "⚠ La memoria debe ser al menos 1GB" "Red"
+            }
+            elseif ($memValue -gt $maxSafeRAM) {
+                Write-ColorText "⚠ Advertencia: Dejarías solo $($systemResources.TotalRAM - $memValue)GB para Windows" "Yellow"
+                $confirm = Read-Host "¿Estás seguro? Esto podría causar problemas de rendimiento (S/N)"
+                if ($confirm -eq 'S' -or $confirm -eq 's') {
+                    $memory = "${memValue}GB"
+                    break
+                }
+            }
+            else {
+                $memory = "${memValue}GB"
+                break
+            }
         }
-        Write-ColorText "Por favor ingresa un valor entre 1 y 60 GB" "Red"
+        else {
+            Write-ColorText "Por favor ingresa un número válido" "Red"
+        }
     } while ($true)
-    
+
     # Solicitar procesadores
+    Write-Host ""
     do {
-        $procInput = Read-Host "Cuántos procesadores asignar? (ej: 16)"
+        $procInput = Read-Host "¿Cuántos procesadores asignar? (ej: 16)"
         $procValue = 0
-        if ([int]::TryParse($procInput, [ref]$procValue) -and $procValue -gt 0 -and $procValue -le 24) {
-            $processors = $procValue
-            break
+        if ([int]::TryParse($procInput, [ref]$procValue)) {
+            if ($procValue -lt 1) {
+                Write-ColorText "⚠ Los procesadores deben ser al menos 1" "Red"
+            }
+            elseif ($procValue -gt $maxSafeCPU) {
+                Write-ColorText "⚠ Advertencia: Dejarías solo $($systemResources.TotalCPUs - $procValue) CPU(s) para Windows" "Yellow"
+                $confirm = Read-Host "¿Estás seguro? (S/N)"
+                if ($confirm -eq 'S' -or $confirm -eq 's') {
+                    $processors = $procValue
+                    break
+                }
+            }
+            else {
+                $processors = $procValue
+                break
+            }
         }
-        Write-ColorText "Por favor ingresa un valor entre 1 y 24" "Red"
+        else {
+            Write-ColorText "Por favor ingresa un número válido" "Red"
+        }
     } while ($true)
-    
+
+    # Calcular recursos restantes para Windows
+    $winRAM = $systemResources.TotalRAM - $memValue
+    $winCPUs = $systemResources.TotalCPUs - $procValue
+
     # Mostrar resumen
     Write-Host ""
-    Write-ColorText "Configuración personalizada:" "Yellow"
-    Write-Host "  WSL: $memory RAM + $processors CPUs"
-    Write-Host "  Windows: $([Math]::Max(4, 64 - $memValue))GB RAM + $([Math]::Max(1, 24 - $procValue)) CPUs disponibles"
-    
+    Write-ColorText "═══════════════════════════════════════════════════════════" "Cyan"
+    Write-ColorText "              RESUMEN DE CONFIGURACIÓN                      " "Yellow"
+    Write-ColorText "═══════════════════════════════════════════════════════════" "Cyan"
     Write-Host ""
-    $confirm = Read-Host "Aplicar esta configuración? (S/N)"
+    Write-Host "WSL recibirá:"
+    Write-ColorText "  • Memoria:      $memory ($memValue GB)" "Green"
+    Write-ColorText "  • Procesadores: $processors cores" "Green"
+    Write-Host ""
+    Write-Host "Windows tendrá disponible:"
+    Write-ColorText "  • Memoria:      $winRAM GB" $(if ($winRAM -lt 8) { "Red" } elseif ($winRAM -lt 16) { "Yellow" } else { "Green" })
+    Write-ColorText "  • Procesadores: $winCPUs cores" $(if ($winCPUs -lt 2) { "Red" } elseif ($winCPUs -lt 4) { "Yellow" } else { "Green" })
+    Write-Host ""
+
+    # Advertencias si la configuración es extrema
+    if ($winRAM -lt 8) {
+        Write-ColorText "⚠ ADVERTENCIA: Windows tendrá menos de 8GB, puede haber problemas de rendimiento!" "Red"
+    }
+    if ($winCPUs -lt 2) {
+        Write-ColorText "⚠ ADVERTENCIA: Windows tendrá menos de 2 CPUs, puede haber lentitud!" "Red"
+    }
+
+    Write-ColorText "═══════════════════════════════════════════════════════════" "Cyan"
+    Write-Host ""
+
+    $confirm = Read-Host "¿Aplicar esta configuración? (S/N)"
     if ($confirm -eq 'S' -or $confirm -eq 's') {
         Apply-Profile $memory $processors "CUSTOM"
     }
 }
 
+# ═══════════════════════════════════════════════════════════
+# PROGRAMA PRINCIPAL
+# ═══════════════════════════════════════════════════════════
+
+# Detectar recursos del sistema al inicio
+Write-Host "Detectando configuración del sistema..." -ForegroundColor Cyan
+$systemResources = Get-SystemResources
+$profiles = Get-DynamicProfiles -systemResources $systemResources
+
+Write-Host "Sistema detectado: $($systemResources.TotalRAM)GB RAM, $($systemResources.TotalCPUs) CPUs" -ForegroundColor Green
+Start-Sleep -Seconds 1
+
 # Bucle principal
 do {
-    Show-Menu
+    Show-Menu -systemResources $systemResources -profiles $profiles
     $choice = Read-Host "`nSelecciona una opción"
-    
+
     switch ($choice) {
-        '1' { Apply-Profile "8GB" 4 "GAMING" }
-        '2' { Apply-Profile "24GB" 12 "BALANCED" }
-        '3' { Apply-Profile "48GB" 20 "WSL_FOCUS" }
-        '4' { Apply-Profile "16GB" 8 "WINDOWS_FOCUS" }
-        '5' { Custom-Mode }
+        '1' {
+            # Perfil 1 - GAMING
+            $profile = $profiles[0]
+            Apply-Profile "$($profile.WSL_RAM)GB" $profile.WSL_CPU $profile.Name
+        }
+        '2' {
+            # Perfil 2 - WINDOWS FOCUS
+            $profile = $profiles[1]
+            Apply-Profile "$($profile.WSL_RAM)GB" $profile.WSL_CPU $profile.Name
+        }
+        '3' {
+            # Perfil 3 - BALANCED
+            $profile = $profiles[2]
+            Apply-Profile "$($profile.WSL_RAM)GB" $profile.WSL_CPU $profile.Name
+        }
+        '4' {
+            # Perfil 4 - WSL DEV
+            $profile = $profiles[3]
+            Apply-Profile "$($profile.WSL_RAM)GB" $profile.WSL_CPU $profile.Name
+        }
+        '5' {
+            # Perfil 5 - WSL FOCUS
+            $profile = $profiles[4]
+            Apply-Profile "$($profile.WSL_RAM)GB" $profile.WSL_CPU $profile.Name
+        }
+        'C' {
+            # Modo personalizado
+            Custom-Mode -systemResources $systemResources
+        }
+        'c' {
+            # Modo personalizado
+            Custom-Mode -systemResources $systemResources
+        }
         'R' { Restart-WSL }
         'r' { Restart-WSL }
         'S' { Show-Status }
         's' { Show-Status }
         'Q' { break }
         'q' { break }
-        default { 
+        default {
             Write-ColorText "Opción no válida!" "Red"
             Start-Sleep -Seconds 1
         }
     }
 } while ($choice -ne 'Q' -and $choice -ne 'q')
 
-Write-ColorText "`nHasta luego!" "Green"
+Write-Host ""
+Write-ColorText "═══════════════════════════════════════════════════════════" "Cyan"
+Write-ColorText "    ¡Gracias por usar WSL Memory Switch!" "Green"
+Write-ColorText "═══════════════════════════════════════════════════════════" "Cyan"
+Write-Host ""

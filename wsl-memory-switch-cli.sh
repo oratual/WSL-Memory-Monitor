@@ -1,10 +1,16 @@
 #!/bin/bash
 # WSL Memory Switch CLI - Control de perfiles de memoria desde Linux
+# Perfiles dinámicos basados en RAM del sistema
 
 # Configuración
-WSLCONFIG="/mnt/c/Users/lauta/.wslconfig"
-BACKUP="/mnt/c/Users/lauta/.wslconfig.backup"
-PROFILES_FILE="$(dirname "$0")/wsl-memory-profiles.conf"
+# Detectar automáticamente el usuario de Windows
+WINDOWS_USER=$(powershell.exe -Command "echo \$env:USERNAME" 2>/dev/null | tr -d '\r')
+if [ -z "$WINDOWS_USER" ]; then
+    WINDOWS_USER="$USER"
+fi
+
+WSLCONFIG="/mnt/c/Users/${WINDOWS_USER}/.wslconfig"
+BACKUP="/mnt/c/Users/${WINDOWS_USER}/.wslconfig.backup"
 
 # Colores
 RED='\033[0;31m'
@@ -12,7 +18,65 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
+
+# Función para detectar recursos del sistema
+get_system_resources() {
+    # Obtener RAM total del sistema en GB
+    local total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    local total_ram=$((total_ram_kb / 1024 / 1024))
+
+    # Obtener número de CPUs
+    local total_cpus=$(nproc)
+
+    # Obtener nombre del CPU
+    local cpu_name=$(grep "model name" /proc/cpuinfo | head -1 | cut -d':' -f2 | xargs)
+
+    echo "$total_ram:$total_cpus:$cpu_name"
+}
+
+# Función para generar perfiles dinámicos
+generate_dynamic_profiles() {
+    local total_ram=$1
+    local total_cpus=$2
+
+    # Perfil 1: GAMING - 12.5% RAM para WSL (mínimo 4GB, máximo 8GB)
+    local p1_wsl=$(( total_ram * 125 / 1000 ))
+    [ $p1_wsl -lt 4 ] && p1_wsl=4
+    [ $p1_wsl -gt 8 ] && p1_wsl=8
+    local p1_cpu=$(( total_cpus * 25 / 100 ))
+    [ $p1_cpu -lt 2 ] && p1_cpu=2
+
+    # Perfil 2: WINDOWS FOCUS - 25% RAM para WSL
+    local p2_wsl=$(( total_ram * 25 / 100 ))
+    [ $p2_wsl -lt 8 ] && p2_wsl=8
+    local p2_cpu=$(( total_cpus * 33 / 100 ))
+    [ $p2_cpu -lt 4 ] && p2_cpu=4
+
+    # Perfil 3: BALANCED - 37.5% RAM para WSL
+    local p3_wsl=$(( total_ram * 375 / 1000 ))
+    [ $p3_wsl -lt 12 ] && p3_wsl=12
+    local p3_cpu=$(( total_cpus * 50 / 100 ))
+    [ $p3_cpu -lt 6 ] && p3_cpu=6
+
+    # Perfil 4: WSL DEV - 50% RAM para WSL
+    local p4_wsl=$(( total_ram * 50 / 100 ))
+    [ $p4_wsl -lt 16 ] && p4_wsl=16
+    local p4_cpu=$(( total_cpus * 67 / 100 ))
+    [ $p4_cpu -lt 8 ] && p4_cpu=8
+
+    # Perfil 5: WSL FOCUS - 75% RAM para WSL (máximo seguro)
+    local p5_wsl=$(( total_ram * 75 / 100 ))
+    [ $p5_wsl -lt 24 ] && p5_wsl=24
+    local max_wsl=$(( total_ram - 8 ))
+    [ $p5_wsl -gt $max_wsl ] && p5_wsl=$max_wsl
+    local p5_cpu=$(( total_cpus * 83 / 100 ))
+    [ $p5_cpu -lt 12 ] && p5_cpu=12
+
+    # Retornar perfiles separados por pipes
+    echo "${p1_wsl}:${p1_cpu}|${p2_wsl}:${p2_cpu}|${p3_wsl}:${p3_cpu}|${p4_wsl}:${p4_cpu}|${p5_wsl}:${p5_cpu}"
+}
 
 # Función para obtener perfil actual
 get_current_profile() {
@@ -157,90 +221,180 @@ EOF
 
 # Función para mostrar estado
 show_status() {
-    echo -e "${CYAN}=== ESTADO DE WSL ===${NC}"
+    # Detectar recursos
+    local resources=$(get_system_resources)
+    local total_ram=$(echo "$resources" | cut -d':' -f1)
+    local total_cpus=$(echo "$resources" | cut -d':' -f2)
+    local cpu_name=$(echo "$resources" | cut -d':' -f3-)
+
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║                    ESTADO DE WSL                          ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
     echo
-    echo -e "${YELLOW}Configuración actual:${NC}"
+    echo -e "${YELLOW}Sistema:${NC}"
+    echo "  CPU:  $cpu_name"
+    echo "  RAM:  ${total_ram}GB total"
+    echo "  CPUs: ${total_cpus} cores"
+    echo
+    echo -e "${YELLOW}Configuración actual (.wslconfig):${NC}"
     get_current_profile
-    echo
-    echo -e "${YELLOW}Recursos del sistema:${NC}"
-    echo "RAM Total del sistema: 64GB"
-    echo "CPUs totales: 24 (Ryzen 9 5900X)"
     echo
     echo -e "${YELLOW}Estado actual de WSL:${NC}"
     free -h | grep -E "Mem:|Swap:"
     echo "Procesadores disponibles: $(nproc)"
     echo "Uptime: $(uptime -p)"
     echo
-    echo -e "${YELLOW}Uso de memoria:${NC}"
-    ps aux --sort=-%mem | head -5
+    echo -e "${YELLOW}Uso de memoria (top 5):${NC}"
+    ps aux --sort=-%mem | head -6 | tail -5
+    echo
 }
 
-# Función para mostrar perfiles
+# Función para mostrar perfiles dinámicos
 list_profiles() {
-    echo -e "${CYAN}=== PERFILES DISPONIBLES ===${NC}"
+    # Detectar recursos
+    local resources=$(get_system_resources)
+    local total_ram=$(echo "$resources" | cut -d':' -f1)
+    local total_cpus=$(echo "$resources" | cut -d':' -f2)
+
+    # Generar perfiles
+    local profiles=$(generate_dynamic_profiles "$total_ram" "$total_cpus")
+
+    # Parsear perfiles
+    local p1=$(echo "$profiles" | cut -d'|' -f1)
+    local p2=$(echo "$profiles" | cut -d'|' -f2)
+    local p3=$(echo "$profiles" | cut -d'|' -f3)
+    local p4=$(echo "$profiles" | cut -d'|' -f4)
+    local p5=$(echo "$profiles" | cut -d'|' -f5)
+
+    local p1_wsl=$(echo "$p1" | cut -d':' -f1)
+    local p1_cpu=$(echo "$p1" | cut -d':' -f2)
+    local p2_wsl=$(echo "$p2" | cut -d':' -f1)
+    local p2_cpu=$(echo "$p2" | cut -d':' -f2)
+    local p3_wsl=$(echo "$p3" | cut -d':' -f1)
+    local p3_cpu=$(echo "$p3" | cut -d':' -f2)
+    local p4_wsl=$(echo "$p4" | cut -d':' -f1)
+    local p4_cpu=$(echo "$p4" | cut -d':' -f2)
+    local p5_wsl=$(echo "$p5" | cut -d':' -f1)
+    local p5_cpu=$(echo "$p5" | cut -d':' -f2)
+
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║         PERFILES DISPONIBLES (para tu sistema)           ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+    echo
+    echo -e "${YELLOW}Sistema: ${total_ram}GB RAM | ${total_cpus} CPUs${NC}"
     echo
     echo -e "${RED}[gaming]${NC} - Gaming Mode"
-    echo "  └─ WSL: 8GB RAM + 4 CPUs"
-    echo "  └─ Windows: 56GB RAM + 20 CPUs disponibles"
+    echo "  ├─ WSL:     ${p1_wsl}GB RAM + ${p1_cpu} CPUs"
+    echo "  ├─ Windows: $((total_ram - p1_wsl))GB RAM + $((total_cpus - p1_cpu)) CPUs"
+    echo "  └─ Uso: Juegos AAA, streaming, máximo rendimiento Windows"
+    echo
+    echo -e "${BLUE}[windows-focus]${NC} - Windows Focus"
+    echo "  ├─ WSL:     ${p2_wsl}GB RAM + ${p2_cpu} CPUs"
+    echo "  ├─ Windows: $((total_ram - p2_wsl))GB RAM + $((total_cpus - p2_cpu)) CPUs"
+    echo "  └─ Uso: Edición video, diseño, VMs Windows"
     echo
     echo -e "${YELLOW}[balanced]${NC} - Modo Equilibrado"
-    echo "  └─ WSL: 24GB RAM + 12 CPUs"
-    echo "  └─ Windows: 40GB RAM + 12 CPUs disponibles"
+    echo "  ├─ WSL:     ${p3_wsl}GB RAM + ${p3_cpu} CPUs"
+    echo "  ├─ Windows: $((total_ram - p3_wsl))GB RAM + $((total_cpus - p3_cpu)) CPUs"
+    echo "  └─ Uso: Uso mixto, desarrollo + apps Windows"
     echo
-    echo -e "${GREEN}[wsl-focus]${NC} - WSL Prioritario"
-    echo "  └─ WSL: 48GB RAM + 20 CPUs"
-    echo "  └─ Windows: 16GB RAM + 4 CPUs disponibles"
+    echo -e "${GREEN}[wsl-dev]${NC} - WSL Development"
+    echo "  ├─ WSL:     ${p4_wsl}GB RAM + ${p4_cpu} CPUs"
+    echo "  ├─ Windows: $((total_ram - p4_wsl))GB RAM + $((total_cpus - p4_cpu)) CPUs"
+    echo "  └─ Uso: Desarrollo, Docker, builds medianos"
     echo
-    echo -e "${BLUE}[windows-focus]${NC} - Windows Prioritario"
-    echo "  └─ WSL: 16GB RAM + 8 CPUs"
-    echo "  └─ Windows: 48GB RAM + 16 CPUs disponibles"
+    echo -e "${CYAN}[wsl-focus]${NC} - WSL Prioritario"
+    echo "  ├─ WSL:     ${p5_wsl}GB RAM + ${p5_cpu} CPUs"
+    echo "  ├─ Windows: $((total_ram - p5_wsl))GB RAM + $((total_cpus - p5_cpu)) CPUs"
+    echo "  └─ Uso: Desarrollo intensivo, Docker pesado, compilación"
+    echo
+    echo -e "${MAGENTA}[custom]${NC} - Configuración manual"
+    echo "  └─ Especifica valores personalizados"
+    echo
 }
 
 # Función para mostrar ayuda
 show_help() {
-    echo -e "${CYAN}WSL Memory Switch CLI${NC}"
-    echo "Control de perfiles de memoria para WSL2"
+    echo -e "${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║            WSL Memory Switch CLI - Ayuda                  ║${NC}"
+    echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+    echo
+    echo -e "${YELLOW}Control de perfiles de memoria para WSL2 con detección automática${NC}"
     echo
     echo "Uso:"
     echo "  wsl-memory-switch [comando] [opciones]"
     echo
     echo "Comandos:"
-    echo "  apply <perfil>     Aplicar un perfil predefinido"
-    echo "  custom <mem> <cpu> Aplicar configuración personalizada"
-    echo "  status             Mostrar estado actual"
-    echo "  list               Listar perfiles disponibles"
-    echo "  restart            Reiniciar WSL"
-    echo "  current            Mostrar configuración actual"
-    echo "  help               Mostrar esta ayuda"
+    echo "  ${GREEN}apply <perfil>${NC}     Aplicar un perfil predefinido"
+    echo "  ${GREEN}custom <mem> <cpu>${NC} Aplicar configuración personalizada"
+    echo "  ${GREEN}status${NC}             Mostrar estado actual del sistema"
+    echo "  ${GREEN}list${NC}               Listar perfiles disponibles (dinámicos)"
+    echo "  ${GREEN}restart${NC}            Reiniciar WSL"
+    echo "  ${GREEN}current${NC}            Mostrar configuración actual"
+    echo "  ${GREEN}help${NC}               Mostrar esta ayuda"
     echo
-    echo "Perfiles disponibles:"
-    echo "  gaming         8GB RAM, 4 CPUs"
-    echo "  balanced       24GB RAM, 12 CPUs"
-    echo "  wsl-focus      48GB RAM, 20 CPUs"
-    echo "  windows-focus  16GB RAM, 8 CPUs"
+    echo "Perfiles disponibles (se calculan según tu RAM):"
+    echo "  ${RED}gaming${NC}         Mínimo para WSL, máximo para Windows/juegos"
+    echo "  ${BLUE}windows-focus${NC}  Prioridad para Windows (edición, diseño)"
+    echo "  ${YELLOW}balanced${NC}       Equilibrado entre Windows y WSL"
+    echo "  ${GREEN}wsl-dev${NC}        Prioridad para desarrollo WSL"
+    echo "  ${CYAN}wsl-focus${NC}      Máximo para WSL, desarrollo intensivo"
     echo
     echo "Ejemplos:"
-    echo "  wsl-memory-switch apply gaming"
-    echo "  wsl-memory-switch custom 32 16"
-    echo "  wsl-memory-switch status"
+    echo "  wsl-memory-switch list            # Ver perfiles para tu sistema"
+    echo "  wsl-memory-switch apply balanced  # Aplicar perfil equilibrado"
+    echo "  wsl-memory-switch custom 32 16    # 32GB RAM, 16 CPUs personalizados"
+    echo "  wsl-memory-switch status          # Ver estado completo"
+    echo
+    echo "Nota: Los perfiles se calculan automáticamente según tu RAM total"
+    echo "      Usa 'list' para ver los valores exactos para tu sistema"
+    echo
 }
 
 # Función principal
 main() {
+    # Detectar recursos del sistema
+    local resources=$(get_system_resources)
+    local total_ram=$(echo "$resources" | cut -d':' -f1)
+    local total_cpus=$(echo "$resources" | cut -d':' -f2)
+
+    # Generar perfiles dinámicos
+    local profiles=$(generate_dynamic_profiles "$total_ram" "$total_cpus")
+
+    # Parsear perfiles
+    local p1=$(echo "$profiles" | cut -d'|' -f1)  # gaming
+    local p2=$(echo "$profiles" | cut -d'|' -f2)  # windows-focus
+    local p3=$(echo "$profiles" | cut -d'|' -f3)  # balanced
+    local p4=$(echo "$profiles" | cut -d'|' -f4)  # wsl-dev
+    local p5=$(echo "$profiles" | cut -d'|' -f5)  # wsl-focus
+
     case "${1:-help}" in
         apply)
             case "$2" in
                 gaming)
-                    apply_profile "8GB" 4 "GAMING"
-                    ;;
-                balanced)
-                    apply_profile "24GB" 12 "BALANCED"
-                    ;;
-                wsl-focus)
-                    apply_profile "48GB" 20 "WSL_FOCUS"
+                    local wsl_ram=$(echo "$p1" | cut -d':' -f1)
+                    local wsl_cpu=$(echo "$p1" | cut -d':' -f2)
+                    apply_profile "${wsl_ram}GB" "$wsl_cpu" "GAMING"
                     ;;
                 windows-focus)
-                    apply_profile "16GB" 8 "WINDOWS_FOCUS"
+                    local wsl_ram=$(echo "$p2" | cut -d':' -f1)
+                    local wsl_cpu=$(echo "$p2" | cut -d':' -f2)
+                    apply_profile "${wsl_ram}GB" "$wsl_cpu" "WINDOWS_FOCUS"
+                    ;;
+                balanced)
+                    local wsl_ram=$(echo "$p3" | cut -d':' -f1)
+                    local wsl_cpu=$(echo "$p3" | cut -d':' -f2)
+                    apply_profile "${wsl_ram}GB" "$wsl_cpu" "BALANCED"
+                    ;;
+                wsl-dev)
+                    local wsl_ram=$(echo "$p4" | cut -d':' -f1)
+                    local wsl_cpu=$(echo "$p4" | cut -d':' -f2)
+                    apply_profile "${wsl_ram}GB" "$wsl_cpu" "WSL_DEV"
+                    ;;
+                wsl-focus)
+                    local wsl_ram=$(echo "$p5" | cut -d':' -f1)
+                    local wsl_cpu=$(echo "$p5" | cut -d':' -f2)
+                    apply_profile "${wsl_ram}GB" "$wsl_cpu" "WSL_FOCUS"
                     ;;
                 *)
                     echo -e "${RED}Error: Perfil '$2' no reconocido${NC}"
@@ -253,17 +407,50 @@ main() {
             if [ -z "$2" ] || [ -z "$3" ]; then
                 echo -e "${RED}Error: Debes especificar memoria y CPUs${NC}"
                 echo "Ejemplo: wsl-memory-switch custom 32 16"
+                echo ""
+                echo "Sistema detectado: ${total_ram}GB RAM, ${total_cpus} CPUs"
+                echo "Recomendación: Deja al menos 4GB para Windows"
                 exit 1
             fi
-            # Validar valores
-            if ! [[ "$2" =~ ^[0-9]+$ ]] || [ "$2" -lt 1 ] || [ "$2" -gt 60 ]; then
-                echo -e "${RED}Error: Memoria debe ser entre 1 y 60 GB${NC}"
+
+            # Validar valores con límites dinámicos
+            local max_safe_ram=$((total_ram - 4))
+            local max_safe_cpu=$((total_cpus - 1))
+
+            if ! [[ "$2" =~ ^[0-9]+$ ]] || [ "$2" -lt 1 ]; then
+                echo -e "${RED}Error: Memoria debe ser al menos 1 GB${NC}"
                 exit 1
             fi
-            if ! [[ "$3" =~ ^[0-9]+$ ]] || [ "$3" -lt 1 ] || [ "$3" -gt 24 ]; then
-                echo -e "${RED}Error: CPUs debe ser entre 1 y 24${NC}"
+
+            if [ "$2" -gt "$total_ram" ]; then
+                echo -e "${RED}Error: Memoria solicitada ($2GB) excede RAM total (${total_ram}GB)${NC}"
                 exit 1
             fi
+
+            if [ "$2" -gt "$max_safe_ram" ]; then
+                echo -e "${YELLOW}⚠ Advertencia: Asignas $2GB a WSL, dejando solo $((total_ram - $2))GB para Windows${NC}"
+                echo -e "${YELLOW}  Se recomienda dejar al menos 4GB para Windows${NC}"
+                read -p "¿Continuar de todos modos? (s/N): " -r confirm
+                if [[ ! $confirm =~ ^[Ss]$ ]]; then
+                    echo "Cancelado"
+                    exit 0
+                fi
+            fi
+
+            if ! [[ "$3" =~ ^[0-9]+$ ]] || [ "$3" -lt 1 ]; then
+                echo -e "${RED}Error: CPUs debe ser al menos 1${NC}"
+                exit 1
+            fi
+
+            if [ "$3" -gt "$total_cpus" ]; then
+                echo -e "${RED}Error: CPUs solicitados ($3) excede CPUs totales (${total_cpus})${NC}"
+                exit 1
+            fi
+
+            if [ "$3" -gt "$max_safe_cpu" ]; then
+                echo -e "${YELLOW}⚠ Advertencia: Asignas $3 CPUs a WSL, dejando solo $((total_cpus - $3)) para Windows${NC}"
+            fi
+
             apply_profile "${2}GB" "$3" "CUSTOM"
             ;;
         status)
@@ -284,6 +471,7 @@ main() {
             ;;
         *)
             echo -e "${RED}Comando no reconocido: $1${NC}"
+            echo ""
             show_help
             exit 1
             ;;
