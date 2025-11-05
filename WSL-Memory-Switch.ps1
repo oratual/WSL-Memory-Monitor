@@ -88,16 +88,57 @@ function Show-Menu {
     Write-ColorText "`n================================================" "Cyan"
 }
 
-# Función para aplicar perfil
-function Apply-Profile($memory, $processors, $profileName) {
-    Write-ColorText "`nAplicando perfil $profileName..." "Yellow"
-    
+# Función para verificar si el daemon está corriendo
+function Test-DaemonRunning {
+    try {
+        $daemonStatus = wsl -e bash -c "wsl-memory-daemon status 2>&1 | grep -q 'RUNNING' && echo 'true' || echo 'false'"
+        return ($daemonStatus -eq 'true')
+    } catch {
+        return $false
+    }
+}
+
+# Función para aplicar cambios dinámicamente (sin reiniciar WSL)
+function Apply-Dynamic($memory, $processors, $profileName) {
+    Write-ColorText "`nAplicando cambios dinámicamente (sin reiniciar)..." "Cyan"
+
+    # Extraer número de GB
+    $memGB = $memory -replace 'GB', ''
+
+    # Aplicar a través del daemon
+    try {
+        $result = wsl -e bash -c "wsl-memory-daemon set $memGB $processors 2>&1"
+
+        if ($LASTEXITCODE -eq 0) {
+            Write-ColorText "✓ Cambios aplicados dinámicamente!" "Green"
+            Write-Host "  Memoria: $memory"
+            Write-Host "  CPUs: $processors"
+            Write-Host ""
+            Write-ColorText "Nota: Los cambios de memoria son inmediatos." "Yellow"
+            Write-ColorText "      Los cambios de CPU requieren reiniciar WSL." "Yellow"
+
+            # Actualizar también .wslconfig para persistencia
+            Update-WslConfig $memory $processors $profileName
+
+            return $true
+        } else {
+            Write-ColorText "✗ Error al aplicar cambios dinámicos" "Red"
+            Write-Host $result
+            return $false
+        }
+    } catch {
+        Write-ColorText "✗ Error: $_" "Red"
+        return $false
+    }
+}
+
+# Función para actualizar .wslconfig sin aplicar
+function Update-WslConfig($memory, $processors, $profileName) {
     # Backup actual
     if (Test-Path $ConfigPath) {
         Copy-Item $ConfigPath $BackupPath -Force
-        Write-Host "Backup creado en: $BackupPath"
     }
-    
+
     # Crear nueva configuración
     $newConfig = @"
 [wsl2]
@@ -114,11 +155,59 @@ firewall=true
 autoMemoryReclaim=gradual
 sparseVhd=true
 "@
-    
+
     # Guardar configuración
     $newConfig | Out-File -FilePath $ConfigPath -Encoding UTF8
+}
+
+# Función para aplicar perfil
+function Apply-Profile($memory, $processors, $profileName) {
+    Write-ColorText "`nAplicando perfil $profileName..." "Yellow"
+
+    # Verificar si el daemon está disponible
+    $daemonAvailable = Test-DaemonRunning
+
+    if ($daemonAvailable) {
+        Write-Host ""
+        Write-ColorText "El daemon de memoria dinámica está activo!" "Green"
+        Write-Host ""
+        Write-Host "Opciones:"
+        Write-Host "  [D] Aplicar DINÁMICAMENTE (sin reiniciar WSL) - Recomendado"
+        Write-Host "  [R] Aplicar y REINICIAR WSL (método tradicional)"
+        Write-Host "  [C] Solo actualizar configuración (aplicar después)"
+        Write-Host ""
+
+        $choice = Read-Host "¿Cómo deseas aplicar los cambios? (D/R/C)"
+
+        switch ($choice.ToUpper()) {
+            'D' {
+                # Aplicar dinámicamente
+                $success = Apply-Dynamic $memory $processors $profileName
+                if ($success) {
+                    Write-Host ""
+                    Pause
+                    return
+                }
+                # Si falla, continuar con método tradicional
+                Write-ColorText "`nUsando método tradicional..." "Yellow"
+            }
+            'C' {
+                # Solo actualizar config
+                Update-WslConfig $memory $processors $profileName
+                Write-ColorText "`nConfiguración actualizada!" "Green"
+                Write-Host "Los cambios se aplicarán al reiniciar WSL"
+                Write-Host ""
+                Pause
+                return
+            }
+            # 'R' o default: continuar con reinicio
+        }
+    }
+
+    # Método tradicional: actualizar config y preguntar por reinicio
+    Update-WslConfig $memory $processors $profileName
     Write-ColorText "Configuración actualizada exitosamente!" "Green"
-    
+
     # Preguntar si reiniciar WSL
     Write-Host ""
     $restart = Read-Host "Deseas reiniciar WSL ahora para aplicar los cambios? (S/N)"

@@ -36,6 +36,8 @@ A comprehensive visual memory management tool for WSL2 on Windows. Control and m
 - **⚡ Real-time Updates**: Monitor updates every 30 seconds to reflect configuration changes
 - **🖱️ One-click Access**: Left-click tray icon to instantly open Memory Switch
 - **🔄 Hot Restart**: Integrated WSL restart functionality without closing applications
+- **✨ Dynamic Memory Adjustment (NEW!)**: Change memory allocation without restarting WSL using cgroups daemon
+- **🚀 Automated Installer**: One-click setup with intelligent path detection and configuration
 
 ### Memory Profiles
 The tool includes 5 carefully calibrated profiles for different use cases:
@@ -108,38 +110,95 @@ The tool includes 5 carefully calibrated profiles for different use cases:
 
 ## 🚀 Installation
 
-### Method 1: Quick Install (Recommended)
-1. Download the latest release from [Releases](https://github.com/yourusername/WSL-Memory-Monitor/releases)
-2. Extract to your preferred location (e.g., `C:\Tools\WSL-Memory-Monitor`)
-3. Right-click `Install-AutoStart.ps1` → Run with PowerShell
-4. Follow the prompts to configure auto-start
+### Method 1: Automated Installer (Recommended) ⭐
+The easiest and most reliable way to install WSL Memory Monitor:
 
-### Method 2: Git Clone
+1. Download the latest release ZIP from [Releases](https://github.com/oratual/WSL-Memory-Monitor/releases)
+2. Extract to a **permanent location** (e.g., `C:\Tools\WSL-Memory-Monitor`)
+   - ⚠️ Don't use temporary folders - the program needs to stay here!
+3. Run the installer in one of these ways:
+   - **Option A**: Double-click `INSTALAR.bat`
+   - **Option B**: Right-click `Setup-WSLMemoryMonitor.ps1` → Run with PowerShell
+4. Follow the interactive prompts:
+   - The installer will detect your system configuration
+   - Configure paths automatically
+   - Set up auto-start (optional)
+   - Install CLI tools in WSL
+   - Configure system tray icon
+5. Done! The monitor will appear in your system tray
+
+**What the installer does:**
+- ✅ Detects your Windows username and system resources
+- ✅ Configures all file paths automatically
+- ✅ Creates desktop shortcuts
+- ✅ Sets up auto-start on Windows boot
+- ✅ Installs CLI command in WSL
+- ✅ Creates initial balanced configuration
+- ✅ Configures system tray icon visibility
+
+### Method 2: Git Clone (For Developers)
 ```bash
 # From Windows PowerShell or WSL
-git clone https://github.com/yourusername/WSL-Memory-Monitor.git
+git clone https://github.com/oratual/WSL-Memory-Monitor.git
 cd WSL-Memory-Monitor
 
-# Windows: Install auto-start
-powershell -ExecutionPolicy Bypass -File Install-AutoStart.ps1
-
-# WSL: Install CLI tool
-chmod +x wsl-memory-switch-cli.sh
-ln -s $(pwd)/wsl-memory-switch-cli.sh ~/.local/bin/wsl-memory-switch
+# Run automated installer
+powershell -ExecutionPolicy Bypass -File Setup-WSLMemoryMonitor.ps1
 ```
 
-### Method 3: Manual Installation
-1. Download ZIP from GitHub
-2. Extract to desired location
+### Method 3: Manual Installation (Advanced)
+If you prefer manual setup or the automated installer doesn't work:
+
+1. Download and extract ZIP to desired location
+2. Update paths in scripts manually:
+   - Edit `WSL-Memory-Switch.ps1` - update `$ConfigPath`
+   - Edit `WSL-Memory-Monitor.ps1` - update `$ConfigPath`
+   - Edit `wsl-memory-switch-cli.sh` - update `WSLCONFIG`
 3. Create shortcut to `START-MONITOR.bat` in:
    ```
    %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
    ```
+4. Run `Make-Icon-Visible.ps1` as administrator
 
-### Post-Installation Setup
-1. Run `Make-Icon-Visible.ps1` to pin the tray icon
-2. Or manually drag the icon from hidden tray area to visible area
-3. Configure your preferred default profile
+### Optional: Enable Dynamic Memory (No Restart Required!)
+
+After installation, you can enable the dynamic memory daemon for instant memory adjustments:
+
+```bash
+# From WSL terminal
+cd /path/to/WSL-Memory-Monitor
+./install-daemon.sh
+```
+
+This installs a background service that allows changing memory allocation **without restarting WSL**!
+
+**Benefits:**
+- ⚡ Instant memory changes
+- 🔄 No WSL restart needed
+- 📊 Real-time resource adjustment
+- 🎯 Perfect for dynamic workloads
+
+**Usage with daemon:**
+When you change memory profiles, you'll see a new option:
+```
+[D] Apply DYNAMICALLY (without restarting WSL) - Recommended
+[R] Apply and RESTART WSL (traditional method)
+```
+
+### Uninstallation
+
+To completely remove WSL Memory Monitor:
+
+```powershell
+# Run from the installation directory
+.\Setup-WSLMemoryMonitor.ps1 -Uninstall
+```
+
+This will:
+- Stop the monitor service
+- Remove auto-start entries
+- Remove desktop shortcuts
+- Optionally remove WSL configuration
 
 ## 🎮 Usage
 
@@ -276,12 +335,19 @@ WSL-Memory-Monitor/
 │   ├── WSL-Memory-Switch.ps1      # Main GUI application
 │   ├── WSL-Memory-Monitor.ps1     # System tray monitor
 │   └── wsl-memory-switch-cli.sh   # Linux CLI interface
-├── Launchers
-│   ├── RUN-MEMORY-SWITCH.bat      # GUI launcher
-│   └── START-MONITOR.bat          # Monitor launcher
-├── Utilities
+├── Dynamic Memory System (NEW!)
+│   ├── wsl-memory-daemon.sh       # Background daemon for dynamic adjustments
+│   ├── wsl-memory-daemon.service  # Systemd service definition
+│   └── install-daemon.sh          # Daemon installer
+├── Installation & Setup
+│   ├── Setup-WSLMemoryMonitor.ps1 # Automated installer
+│   ├── Build-Release.ps1          # Release packaging script
 │   ├── Install-AutoStart.ps1      # Startup installer
 │   └── Make-Icon-Visible.ps1      # Tray icon helper
+├── Launchers
+│   ├── RUN-MEMORY-SWITCH.bat      # GUI launcher
+│   ├── START-MONITOR.bat          # Monitor launcher
+│   └── INSTALAR.bat               # Quick installer launcher
 └── Configuration
     └── wsl-memory-profiles.conf   # Profile definitions
 ```
@@ -306,12 +372,36 @@ WSL-Memory-Monitor/
 - **Integration**: Direct .wslconfig manipulation
 - **Windows Interop**: PowerShell command execution
 
+#### Dynamic Memory Daemon (NEW!)
+- **Technology**: Bash daemon with cgroups v2/v1 support
+- **Service**: Systemd integration with auto-restart
+- **Monitoring**: File-based configuration polling (5s interval)
+- **Memory Control**: Direct cgroups manipulation for instant limits
+- **Persistence**: Updates .wslconfig for permanent changes
+- **Fallback**: Graceful degradation if cgroups unavailable
+
+**How it works:**
+1. Daemon runs in background monitoring config file
+2. When memory profile changes, daemon detects it
+3. Uses Linux cgroups to apply memory limits instantly
+4. No WSL restart required for memory changes
+5. CPU changes still require restart (WSL limitation)
+
 ### Data Flow
+
+#### Traditional Flow (with WSL restart):
 1. User interacts with GUI/CLI/Tray
 2. Tool modifies `~/.wslconfig`
 3. User triggers WSL restart
 4. Windows applies new configuration
 5. Monitor reflects changes
+
+#### Dynamic Flow (without restart):
+1. User interacts with GUI/CLI/Tray
+2. Tool sends command to daemon
+3. Daemon applies memory limits via cgroups **instantly**
+4. Tool updates .wslconfig for persistence
+5. Monitor reflects changes (no restart needed!)
 
 ## 🔧 Troubleshooting
 
@@ -363,6 +453,69 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 2. Windows version doesn't support setting
 3. Syntax error in .wslconfig
 4. Insufficient system memory
+
+#### Dynamic Memory Not Working
+**Problem**: Daemon doesn't apply memory changes instantly
+
+**Solutions**:
+
+1. **Check if daemon is running:**
+   ```bash
+   wsl-memory-daemon status
+   ```
+
+2. **If not running, start it:**
+   ```bash
+   wsl-memory-daemon start
+   # Or with systemd:
+   sudo systemctl start wsl-memory-daemon
+   ```
+
+3. **Check daemon logs:**
+   ```bash
+   wsl-memory-daemon logs
+   # Or with systemd:
+   sudo journalctl -u wsl-memory-daemon -n 50
+   ```
+
+4. **Verify cgroups support:**
+   ```bash
+   # Check if cgroups v2 is available
+   [ -f /sys/fs/cgroup/cgroup.controllers ] && echo "cgroups v2: OK" || echo "cgroups v2: Not available"
+
+   # Check if cgroups v1 is available
+   [ -d /sys/fs/cgroup/memory ] && echo "cgroups v1: OK" || echo "cgroups v1: Not available"
+   ```
+
+5. **Reinstall daemon:**
+   ```bash
+   cd /path/to/WSL-Memory-Monitor
+   ./install-daemon.sh
+   ```
+
+**Note**: Dynamic memory requires cgroups support. If your WSL doesn't have cgroups, you'll need to use the traditional restart method.
+
+#### Installer Not Working
+**Problem**: Setup-WSLMemoryMonitor.ps1 fails or doesn't configure correctly
+
+**Solutions**:
+
+1. **Run as administrator** (some features require admin rights)
+2. **Check execution policy:**
+   ```powershell
+   Get-ExecutionPolicy
+   # Should be at least RemoteSigned
+   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   ```
+
+3. **Verify WSL is installed:**
+   ```powershell
+   wsl --version
+   wsl --list --verbose
+   ```
+
+4. **Check if path is permanent** - Don't install in temporary folders like Downloads or Desktop
+5. **Manual installation** - Follow Method 3 in Installation section
 
 ### Diagnostic Commands
 

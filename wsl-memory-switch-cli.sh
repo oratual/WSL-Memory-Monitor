@@ -25,20 +25,57 @@ get_current_profile() {
     fi
 }
 
-# Función para aplicar perfil
-apply_profile() {
+# Verificar si el daemon está corriendo
+check_daemon() {
+    if command -v wsl-memory-daemon &> /dev/null; then
+        if wsl-memory-daemon status 2>&1 | grep -q "RUNNING"; then
+            return 0  # Daemon corriendo
+        fi
+    fi
+    return 1  # Daemon no disponible
+}
+
+# Aplicar cambios dinámicamente usando el daemon
+apply_dynamic() {
     local memory=$1
     local processors=$2
     local profile_name=$3
-    
-    echo -e "${YELLOW}Aplicando perfil $profile_name...${NC}"
-    
+
+    echo -e "${CYAN}Aplicando cambios dinámicamente (sin reiniciar WSL)...${NC}"
+
+    # Extraer número de GB
+    local mem_gb=$(echo "$memory" | sed 's/GB//')
+
+    # Aplicar a través del daemon
+    if wsl-memory-daemon set "$mem_gb" "$processors"; then
+        echo -e "${GREEN}✓ Cambios aplicados dinámicamente!${NC}"
+        echo "  Memoria: $memory"
+        echo "  CPUs: $processors"
+        echo ""
+        echo -e "${YELLOW}Nota: Los cambios de memoria son inmediatos.${NC}"
+        echo -e "${YELLOW}      Los cambios de CPU requieren reiniciar WSL.${NC}"
+
+        # Actualizar también .wslconfig para persistencia
+        update_wslconfig "$memory" "$processors" "$profile_name"
+
+        return 0
+    else
+        echo -e "${RED}✗ Error al aplicar cambios dinámicos${NC}"
+        return 1
+    fi
+}
+
+# Actualizar .wslconfig sin aplicar inmediatamente
+update_wslconfig() {
+    local memory=$1
+    local processors=$2
+    local profile_name=$3
+
     # Backup
     if [ -f "$WSLCONFIG" ]; then
         cp "$WSLCONFIG" "$BACKUP"
-        echo "Backup creado en: $BACKUP"
     fi
-    
+
     # Crear nueva configuración
     cat > "$WSLCONFIG" << EOF
 [wsl2]
@@ -55,10 +92,39 @@ firewall=true
 autoMemoryReclaim=gradual
 sparseVhd=true
 EOF
-    
+}
+
+# Función para aplicar perfil
+apply_profile() {
+    local memory=$1
+    local processors=$2
+    local profile_name=$3
+
+    echo -e "${YELLOW}Aplicando perfil $profile_name...${NC}"
+
+    # Verificar si el daemon está disponible
+    if check_daemon; then
+        echo ""
+        echo -e "${GREEN}✓ Daemon de memoria dinámica detectado!${NC}"
+        echo ""
+        echo "¿Deseas aplicar los cambios dinámicamente (sin reiniciar)? (S/n): "
+        read -r response
+
+        if [ -z "$response" ] || [ "$response" = "s" ] || [ "$response" = "S" ]; then
+            # Aplicar dinámicamente
+            if apply_dynamic "$memory" "$processors" "$profile_name"; then
+                return 0
+            fi
+            echo -e "${YELLOW}Aplicando método tradicional...${NC}"
+        fi
+    fi
+
+    # Método tradicional: actualizar config
+    update_wslconfig "$memory" "$processors" "$profile_name"
+
     echo -e "${GREEN}✓ Configuración actualizada${NC}"
     echo -e "${YELLOW}⚠️  Necesitas reiniciar WSL para aplicar los cambios${NC}"
-    echo "   Usa: wsl-memory-switch --restart"
+    echo "   Usa: wsl-memory-switch restart"
 }
 
 # Función para reiniciar WSL desde Windows

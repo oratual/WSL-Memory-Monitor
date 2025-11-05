@@ -1,0 +1,22 @@
+[Unit]
+Description=WSL Memory Daemon - Dynamic memory management without restart
+Documentation=https://github.com/oratual/WSL-Memory-Monitor
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/wsl-memory-daemon start
+ExecStop=/usr/local/bin/wsl-memory-daemon stop
+ExecReload=/usr/local/bin/wsl-memory-daemon restart
+PIDFile=/tmp/wsl-memory-daemon.pid
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+# Permisos para poder modificar cgroups
+# Nota: Puede requerir permisos adicionales dependiendo de la configuración
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_RESOURCE
+
+[Install]
+WantedBy=multi-user.target
