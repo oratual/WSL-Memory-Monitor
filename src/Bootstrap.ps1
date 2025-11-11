@@ -13,11 +13,17 @@ $ErrorActionPreference = "Stop"
 . "$PSScriptRoot/Core/Infrastructure/External/Logger.ps1"
 . "$PSScriptRoot/Core/Infrastructure/External/EventBus.ps1"
 . "$PSScriptRoot/Core/Application/Interfaces/IConfigRepository.ps1"
+. "$PSScriptRoot/Core/Infrastructure/Repositories/FileConfigRepository.ps1"
 
-# Application Services (to be loaded)
-# . "$PSScriptRoot/Core/Application/Services/ProfileService.ps1"
-# . "$PSScriptRoot/Core/Application/Services/ConfigurationManager.ps1"
-# . "$PSScriptRoot/Core/Application/Services/SchedulerService.ps1"
+# Application Layer - Factories
+. "$PSScriptRoot/Core/Application/Factories/ProfileFactory.ps1"
+
+# Application Layer - Services
+. "$PSScriptRoot/Core/Application/Services/ProfileService.ps1"
+. "$PSScriptRoot/Core/Application/Services/ConfigurationManager.ps1"
+. "$PSScriptRoot/Core/Application/Services/WSLService.ps1"
+. "$PSScriptRoot/Core/Application/Services/SchedulerService.ps1"
+. "$PSScriptRoot/Core/Application/Services/TelemetryService.ps1"
 
 # Dependency Injection Container
 class ServiceContainer {
@@ -71,26 +77,78 @@ class WSLMemoryMonitorApp {
 
     # Configure dependency injection
     hidden [void] ConfigureServices() {
-        # Logger (singleton)
+        # Core Infrastructure (singletons)
         $this.Container.Register("Logger", {
             param($container)
             return [Logger]::CreateDefault()
         }, $true)
 
-        # EventBus (singleton)
         $this.Container.Register("EventBus", {
             param($container)
             $logger = $container.Resolve("Logger")
             return [EventBus]::new($logger)
         }, $true)
 
-        # SystemResources (singleton)
         $this.Container.Register("SystemResources", {
             param($container)
             return [SystemResources]::DetectCurrent()
         }, $true)
 
-        # Add more services here...
+        # Repository (singleton)
+        $this.Container.Register("ConfigRepository", {
+            param($container)
+            $logger = $container.Resolve("Logger")
+            return [FileConfigRepository]::CreateDefault($logger)
+        }, $true)
+
+        # Factories (singleton)
+        $this.Container.Register("ProfileFactory", {
+            param($container)
+            $logger = $container.Resolve("Logger")
+            return [ProfileFactory]::new($logger)
+        }, $true)
+
+        # Application Services (singletons)
+        $this.Container.Register("ConfigurationManager", {
+            param($container)
+            $configRepo = $container.Resolve("ConfigRepository")
+            $eventBus = $container.Resolve("EventBus")
+            $logger = $container.Resolve("Logger")
+            $systemResources = $container.Resolve("SystemResources")
+            return [ConfigurationManager]::new($configRepo, $eventBus, $logger, $systemResources)
+        }, $true)
+
+        $this.Container.Register("ProfileService", {
+            param($container)
+            $eventBus = $container.Resolve("EventBus")
+            $logger = $container.Resolve("Logger")
+            $systemResources = $container.Resolve("SystemResources")
+            $configRepo = $container.Resolve("ConfigRepository")
+            $profileFactory = $container.Resolve("ProfileFactory")
+            return [ProfileService]::new($eventBus, $logger, $systemResources, $configRepo, $profileFactory)
+        }, $true)
+
+        $this.Container.Register("WSLService", {
+            param($container)
+            $eventBus = $container.Resolve("EventBus")
+            $logger = $container.Resolve("Logger")
+            return [WSLService]::new($eventBus, $logger)
+        }, $true)
+
+        $this.Container.Register("SchedulerService", {
+            param($container)
+            $eventBus = $container.Resolve("EventBus")
+            $logger = $container.Resolve("Logger")
+            $profileService = $container.Resolve("ProfileService")
+            return [SchedulerService]::new($eventBus, $logger, $profileService)
+        }, $true)
+
+        $this.Container.Register("TelemetryService", {
+            param($container)
+            $logger = $container.Resolve("Logger")
+            $eventBus = $container.Resolve("EventBus")
+            return [TelemetryService]::new($logger, $eventBus)
+        }, $true)
     }
 
     # Initialize application
@@ -161,42 +219,79 @@ class WSLMemoryMonitorApp {
         Write-Host ""
 
         # Test Logger
-        Write-Host "Testing Logger..." -ForegroundColor Yellow
-        $this.Logger.Debug("Debug message", @{ Test = "Value" })
-        $this.Logger.Info("Info message")
-        $this.Logger.Warn("Warning message")
-        $this.Logger.Error("Error message", @{ Error = "Test error" })
+        Write-Host "1. Testing Logger..." -ForegroundColor Yellow
+        $this.Logger.Info("Logging system initialized")
 
         # Test EventBus
-        Write-Host "`nTesting EventBus..." -ForegroundColor Yellow
+        Write-Host "`n2. Testing EventBus..." -ForegroundColor Yellow
         $this.EventBus.Subscribe("TestEvent", {
             param($data)
-            Write-Host "  Event received: $($data.Message)" -ForegroundColor Green
+            Write-Host "  ✓ Event received: $($data.Message)" -ForegroundColor Green
         })
         $this.EventBus.Publish("TestEvent", @{ Message = "Hello from EventBus!" })
 
         # Test Domain Models
-        Write-Host "`nTesting Domain Models..." -ForegroundColor Yellow
-        Write-Host "  SystemResources: $($this.SystemResources.ToString())"
+        Write-Host "`n3. Testing Domain Models..." -ForegroundColor Yellow
+        Write-Host "  SystemResources: $($this.SystemResources.ToString())" -ForegroundColor Cyan
 
-        $profile = [Profile]::new("TEST", 16, 8, "Test profile", [ProfileCategory]::Custom)
-        Write-Host "  Profile created: $($profile.Name) - $($profile.WSL_RAM_GB)GB, $($profile.WSL_CPUs) CPUs"
-        Write-Host "  Is valid for system: $($profile.IsValidFor($this.SystemResources))"
+        # Test ProfileFactory
+        Write-Host "`n4. Testing ProfileFactory..." -ForegroundColor Yellow
+        $profileFactory = $this.Container.Resolve("ProfileFactory")
+        $profiles = $profileFactory.GenerateProfiles($this.SystemResources)
+        Write-Host "  ✓ Generated $($profiles.Count) profiles using $($profileFactory.GetCurrentStrategy()) strategy" -ForegroundColor Green
+        foreach ($p in $profiles) {
+            Write-Host "    - $($p.Name): $($p.WSL_RAM_GB)GB RAM, $($p.WSL_CPUs) CPUs" -ForegroundColor Gray
+        }
 
-        $config = $profile.ToConfiguration()
-        Write-Host "  Configuration generated"
+        # Test ProfileService
+        Write-Host "`n5. Testing ProfileService..." -ForegroundColor Yellow
+        $profileService = $this.Container.Resolve("ProfileService")
+        $generatedProfiles = $profileService.GenerateProfiles()
+        Write-Host "  ✓ ProfileService generated $($generatedProfiles.Count) profiles" -ForegroundColor Green
+        $recommendation = $profileService.RecommendProfile("development")
+        Write-Host "  ✓ Recommended profile for development: $($recommendation.Name)" -ForegroundColor Green
 
-        # Test Serialization
-        Write-Host "`nTesting Serialization..." -ForegroundColor Yellow
+        # Test ConfigurationManager
+        Write-Host "`n6. Testing ConfigurationManager..." -ForegroundColor Yellow
+        $configManager = $this.Container.Resolve("ConfigurationManager")
+        $hasConfig = $configManager.HasConfiguration()
+        Write-Host "  Configuration exists: $hasConfig" -ForegroundColor Cyan
+        if ($hasConfig) {
+            $summary = $configManager.GetSummary()
+            Write-Host "  Current profile: $($summary.Profile)" -ForegroundColor Cyan
+            Write-Host "  Memory allocation: WSL=$($summary.Memory.WSL_GB)GB, Windows=$($summary.Memory.Windows_GB)GB" -ForegroundColor Cyan
+        }
+
+        # Test WSLService
+        Write-Host "`n7. Testing WSLService..." -ForegroundColor Yellow
+        $wslService = $this.Container.Resolve("WSLService")
+        $wslStatus = $wslService.GetStatus()
+        Write-Host "  WSL Running: $($wslStatus.IsRunning)" -ForegroundColor Cyan
+        Write-Host "  WSL Version: $($wslStatus.Version)" -ForegroundColor Cyan
+        Write-Host "  Distributions: $($wslStatus.DistributionCount)" -ForegroundColor Cyan
+        $daemonStatus = $wslService.GetDaemonStatus()
+        Write-Host "  Daemon available: $($daemonStatus.Available)" -ForegroundColor Cyan
+
+        # Test SchedulerService
+        Write-Host "`n8. Testing SchedulerService..." -ForegroundColor Yellow
+        $schedulerService = $this.Container.Resolve("SchedulerService")
+        $schedules = $schedulerService.GetSchedules()
+        Write-Host "  ✓ SchedulerService initialized ($($schedules.Count) schedules)" -ForegroundColor Green
+
+        # Test TelemetryService
+        Write-Host "`n9. Testing TelemetryService..." -ForegroundColor Yellow
+        $telemetryService = $this.Container.Resolve("TelemetryService")
+        $telemetryService.TrackEvent("architecture.test", @{ Success = $true })
+        Write-Host "  ✓ TelemetryService initialized and tracking events" -ForegroundColor Green
+
+        # Test Configuration Serialization
+        Write-Host "`n10. Testing Configuration Serialization..." -ForegroundColor Yellow
+        $testProfile = $profiles[2]  # Use Balanced profile
+        $config = $testProfile.ToConfiguration()
         $configStr = $config.Serialize()
-        Write-Host "  Serialized config (first 100 chars): $($configStr.Substring(0, [Math]::Min(100, $configStr.Length)))..."
+        Write-Host "  ✓ Configuration serialized successfully" -ForegroundColor Green
 
-        # Test Events
-        Write-Host "`nTesting Profile Changed Event..." -ForegroundColor Yellow
-        $event = [ProfileChangedEvent]::new("BALANCED", "GAMING", $true)
-        $this.EventBus.Publish("ProfileChanged", $event)
-
-        Write-Host "`n=== Architecture Test Complete ===" -ForegroundColor Green
+        Write-Host "`n=== All Architecture Components Tested Successfully! ===" -ForegroundColor Green
         Write-Host ""
     }
 }
@@ -234,24 +329,38 @@ if ($MyInvocation.InvocationName -ne '.') {
     Write-Host @"
 Architecture components loaded successfully!
 
-Available services:
+✓ Core Infrastructure:
   - Logger: Structured logging with file/console output
   - EventBus: Pub/Sub pattern for decoupled communication
   - SystemResources: Hardware detection value object
-  - Profile: Domain entity with business logic
-  - Configuration: WSL config with serialization
 
-Next steps:
-  1. Complete ProfileService implementation
-  2. Add API REST server
-  3. Implement Scheduler
-  4. Add Telemetry service
-  5. Build Web Dashboard
+✓ Domain Layer:
+  - Profile: Domain entity with business logic and validation
+  - Configuration: WSL config with serialization
+  - SystemResources: Immutable value object for system hardware
+
+✓ Repository Layer:
+  - FileConfigRepository: File-based configuration persistence with backup/history
+
+✓ Factory Layer:
+  - ProfileFactory: Strategy Pattern for flexible profile generation
+    • Percentage-based strategy (default)
+    • Tier-based strategy
+    • Workload-based strategy
+    • Conservative strategy
+
+✓ Application Services:
+  - ProfileService: Profile management and application
+  - ConfigurationManager: Configuration lifecycle management
+  - WSLService: WSL control and monitoring
+  - SchedulerService: Scheduled profile switching (cron-like)
+  - TelemetryService: Privacy-focused usage analytics
 
 To use in your scripts:
   . ./src/Bootstrap.ps1
   `$app = Get-WSLMemoryMonitorApp
-  `$app.Run("GUI")
+  `$profileService = `$app.Container.Resolve("ProfileService")
+  `$profiles = `$profileService.GenerateProfiles()
 
 "@
 }
